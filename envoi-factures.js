@@ -38,6 +38,12 @@ const SHOP_INFO = {
 const DRY_RUN = process.env.DRY_RUN === "1"; // test sans envoyer ni taguer
 const TEST_REDIRECT_EMAIL = process.env.TEST_REDIRECT_EMAIL || null; // envoie tout a cette adresse au lieu du client (test)
 
+// Le POS ne remplit pas toujours order.email meme quand un client est associe :
+// on retombe alors sur l'email du profil client (order.customer.email).
+function emailClient(order) {
+  return order.email || order.customer?.email || null;
+}
+
 // --- Petit garde-fou ---------------------------------------------------------
 for (const [k, v] of Object.entries({
   SHOP,
@@ -148,6 +154,7 @@ async function commandesDuJour() {
             createdAt
             sourceName
             paymentGatewayNames
+            customer { firstName lastName email }
             billingAddress { name address1 address2 zip city country }
             currentSubtotalPriceSet { shopMoney { amount currencyCode } }
             totalPriceSet { shopMoney { amount currencyCode } }
@@ -243,7 +250,9 @@ function genererFacturePDF(order) {
       .text(SHOP_INFO.ape, left);
     const finColGauche = doc.y;
 
-    const nomClient = order.billingAddress?.name || "";
+    const c = order.customer || {};
+    const nomClient =
+      [c.firstName, c.lastName].filter(Boolean).join(" ") || order.billingAddress?.name || "";
     doc.y = colY;
     if (nomClient) doc.font("Helvetica-Bold").fontSize(9).text(nomClient, col2X, doc.y);
     doc.font("Helvetica").fontSize(9);
@@ -253,7 +262,8 @@ function genererFacturePDF(order) {
         .filter(Boolean)
         .forEach((l) => doc.text(l, col2X, doc.y));
     }
-    if (order.email) doc.text(order.email, col2X, doc.y);
+    const emailAffiche = emailClient(order);
+    if (emailAffiche) doc.text(emailAffiche, col2X, doc.y);
 
     doc.y = Math.max(finColGauche, doc.y) + 10;
     doc.moveDown();
@@ -328,13 +338,13 @@ function genererFacturePDF(order) {
 //  Envoie l'email avec la facture PDF en piece jointe (Brevo)
 // ----------------------------------------------------------------------------
 async function envoyerEmail(order, pdfBuffer) {
-  const destinataire = TEST_REDIRECT_EMAIL || order.email;
+  const destinataire = TEST_REDIRECT_EMAIL || emailClient(order);
   const body = {
     sender: { name: SENDER_NAME, email: SENDER_EMAIL },
     to: [{ email: destinataire }],
     subject: `Votre facture Paul Beuscher - commande ${order.name}`,
     htmlContent: `
-      ${TEST_REDIRECT_EMAIL ? `<p style="color:red">[TEST] Redirige depuis ${order.email}</p>` : ""}
+      ${TEST_REDIRECT_EMAIL ? `<p style="color:red">[TEST] Redirige depuis ${emailClient(order)}</p>` : ""}
       <p>Bonjour,</p>
       <p>Merci pour votre achat chez <strong>Paul Beuscher</strong>.</p>
       <p>Vous trouverez votre facture (commande ${order.name}) en piece jointe de cet email.</p>
@@ -420,7 +430,7 @@ async function main() {
       console.log(`- ${order.name} : source "${order.sourceName}" (pas POS) -> ignore`);
       continue;
     }
-    if (!order.email) {
+    if (!emailClient(order)) {
       sautees++;
       console.log(`- ${order.name} : pas d'email client -> ignore`);
       continue;
@@ -428,12 +438,12 @@ async function main() {
     try {
       const pdf = await genererFacturePDF(order);
       if (DRY_RUN) {
-        console.log(`- ${order.name} : [TEST] facture prete pour ${order.email}`);
+        console.log(`- ${order.name} : [TEST] facture prete pour ${emailClient(order)}`);
       } else {
         await envoyerEmail(order, pdf);
         if (!TEST_REDIRECT_EMAIL) await taguerCommande(order.id);
         console.log(
-          `- ${order.name} : facture envoyee a ${TEST_REDIRECT_EMAIL || order.email}` +
+          `- ${order.name} : facture envoyee a ${TEST_REDIRECT_EMAIL || emailClient(order)}` +
             (TEST_REDIRECT_EMAIL ? " (redirection test, pas de tag pose)" : "")
         );
       }
