@@ -147,7 +147,6 @@ async function commandesDuJour() {
             createdAt
             sourceName
             paymentGatewayNames
-            customer { firstName lastName }
             billingAddress { name address1 address2 zip city country }
             currentSubtotalPriceSet { shopMoney { amount currencyCode } }
             totalPriceSet { shopMoney { amount currencyCode } }
@@ -243,9 +242,7 @@ function genererFacturePDF(order) {
       .text(SHOP_INFO.ape, left);
     const finColGauche = doc.y;
 
-    const c = order.customer || {};
-    const nomClient =
-      [c.firstName, c.lastName].filter(Boolean).join(" ") || order.billingAddress?.name || "";
+    const nomClient = order.billingAddress?.name || "";
     doc.y = colY;
     if (nomClient) doc.font("Helvetica-Bold").fontSize(9).text(nomClient, col2X, doc.y);
     doc.font("Helvetica").fontSize(9);
