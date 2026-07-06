@@ -9,6 +9,11 @@
 // ============================================================================
 
 import PDFDocument from "pdfkit";
+import { fileURLToPath } from "url";
+import path from "path";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const LOGO_PATH = path.join(__dirname, "logo-paul-beuscher.png");
 
 // --- Configuration (vient des "Secrets" GitHub) ------------------------------
 const SHOP = process.env.SHOP;                       // ex: paul-beuscher-2.myshopify.com
@@ -18,12 +23,14 @@ const SENDER_EMAIL = process.env.SENDER_EMAIL || "dev@regardbeauty.com";
 const SENDER_NAME = process.env.SENDER_NAME || "Paul Beuscher";
 const API_VERSION = "2025-01";
 
-// Coordonnees de la boutique affichees sur la facture
+// Coordonnees de la boutique affichees sur la facture (mêmes infos que le modèle Sufio)
 const SHOP_INFO = {
   nom: "Paul Beuscher",
   adresse: "27 Boulevard Beaumarchais",
   cp_ville: "75004 Paris",
   pays: "France",
+  siret: "FR96101496172",
+  ape: "Code APE : 4763Z",
   contact: "dev@regardbeauty.com",
 };
 
@@ -108,6 +115,7 @@ async function commandesDuJour() {
             email
             createdAt
             sourceName
+            paymentGatewayNames
             customer { firstName lastName }
             billingAddress { name address1 address2 zip city country }
             currentSubtotalPriceSet { shopMoney { amount currencyCode } }
@@ -118,6 +126,7 @@ async function commandesDuJour() {
               edges {
                 node {
                   title
+                  variantTitle
                   quantity
                   originalUnitPriceSet { shopMoney { amount } }
                 }
@@ -157,95 +166,129 @@ function genererFacturePDF(order) {
         Number(n)
       );
     const dateFr = new Intl.DateTimeFormat("fr-FR", {
-      dateStyle: "long",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
       timeZone: "Europe/Paris",
     }).format(new Date(order.createdAt));
 
-    // En-tete
-    doc.fontSize(22).text("Facture", { align: "left" });
-    doc
-      .fontSize(10)
-      .text(`Commande ${order.name}`, { align: "right" })
-      .text(dateFr, { align: "right" });
+    const left = doc.page.margins.left;
+    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+
+    // --- En-tete : "Facture" a gauche, logo Paul Beuscher a droite ---
+    const topY = doc.y;
+    doc.fontSize(22).font("Helvetica-Bold").fillColor("#000").text("Facture", left, topY);
+    try {
+      doc.image(LOGO_PATH, left + pageWidth - 150, topY - 8, { fit: [150, 45] });
+    } catch (e) {
+      console.warn("Logo introuvable, facture generee sans logo:", e.message);
+    }
+    doc.y = topY + 40;
     doc.moveDown();
 
-    // Emetteur
-    doc.fontSize(11).text("De", { underline: true });
-    doc
-      .fontSize(10)
-      .text(SHOP_INFO.nom)
-      .text(SHOP_INFO.adresse)
-      .text(SHOP_INFO.cp_ville)
-      .text(SHOP_INFO.pays)
-      .text(SHOP_INFO.contact);
+    // --- Numero de facture + date d'emission ---
+    const ligneMeta = (label, val) => {
+      const y = doc.y;
+      doc.font("Helvetica-Bold").fontSize(9).text(label, left, y, { width: 160 });
+      doc.font("Helvetica").fontSize(9).text(val, left + 160, y);
+      doc.moveDown(0.3);
+    };
+    ligneMeta("Numero de facture", order.name.replace("#", ""));
+    ligneMeta("Date d'emission", dateFr);
     doc.moveDown();
 
-    // Client
+    // --- Emetteur / Client, sur deux colonnes ---
+    const colY = doc.y;
+    const col2X = left + pageWidth / 2;
+
+    doc.font("Helvetica-Bold").fontSize(9).text(SHOP_INFO.nom, left, colY);
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .text(SHOP_INFO.adresse, left)
+      .text(SHOP_INFO.cp_ville, left)
+      .text(SHOP_INFO.pays, left)
+      .text(SHOP_INFO.siret, left)
+      .text(SHOP_INFO.ape, left);
+    const finColGauche = doc.y;
+
     const c = order.customer || {};
     const nomClient =
-      [c.firstName, c.lastName].filter(Boolean).join(" ") ||
-      order.billingAddress?.name ||
-      "Client";
-    doc.fontSize(11).text("Facture a", { underline: true });
-    doc.fontSize(10).text(nomClient);
-    if (order.email) doc.text(order.email);
+      [c.firstName, c.lastName].filter(Boolean).join(" ") || order.billingAddress?.name || "";
+    doc.y = colY;
+    if (nomClient) doc.font("Helvetica-Bold").fontSize(9).text(nomClient, col2X, doc.y);
+    doc.font("Helvetica").fontSize(9);
     if (order.billingAddress) {
       const b = order.billingAddress;
       [b.address1, b.address2, [b.zip, b.city].filter(Boolean).join(" "), b.country]
         .filter(Boolean)
-        .forEach((l) => doc.text(l));
+        .forEach((l) => doc.text(l, col2X, doc.y));
     }
+    if (order.email) doc.text(order.email, col2X, doc.y);
+
+    doc.y = Math.max(finColGauche, doc.y) + 10;
     doc.moveDown();
 
-    // Tableau des articles
-    doc.fontSize(11).text("Details de la commande", { underline: true });
-    doc.moveDown(0.5);
-    const x = { qte: 50, article: 110, prix: 450 };
-    const yHead = doc.y;
-    doc.fontSize(10).text("Qte", x.qte, yHead);
-    doc.text("Article", x.article, yHead);
-    doc.text("Prix", x.prix, yHead, { width: 95, align: "right" });
-    doc.moveTo(50, doc.y + 2).lineTo(545, doc.y + 2).stroke();
-    doc.moveDown(0.5);
+    // --- Mode de paiement / Numero de commande ---
+    ligneMeta("Mode de paiement", order.paymentGatewayNames?.[0] || "Non specifie");
+    ligneMeta("Numero de commande", order.name);
+    doc.moveDown();
 
+    // --- Tableau des articles (en-tete noir, comme le modele Sufio) ---
+    const colX = { article: left + 5, qte: left + pageWidth - 180, prix: left + pageWidth - 100 };
+    let y = doc.y;
+    doc.rect(left, y, pageWidth, 20).fill("#000");
+    doc.fillColor("#fff").font("Helvetica-Bold").fontSize(8);
+    doc.text("ARTICLE", colX.article, y + 6);
+    doc.text("QUANTITE", colX.qte, y + 6, { width: 80, align: "center" });
+    doc.text("PRIX UNITAIRE TTC", colX.prix, y + 6, { width: 100, align: "right" });
+    y += 20;
+
+    doc.font("Helvetica").fontSize(9).fillColor("#000");
     for (const e of order.lineItems.edges) {
       const li = e.node;
       const total = Number(li.originalUnitPriceSet.shopMoney.amount) * li.quantity;
-      const y = doc.y;
-      doc.text(String(li.quantity), x.qte, y);
-      doc.text(li.title, x.article, y, { width: 320 });
-      doc.text(fmt(total), x.prix, y, { width: 95, align: "right" });
-      doc.moveDown(0.3);
+      doc.text(li.title, colX.article, y + 6, { width: colX.qte - colX.article - 10 });
+      doc.text(String(li.quantity), colX.qte, y + 6, { width: 80, align: "center" });
+      doc.text(fmt(total), colX.prix, y + 6, { width: 100, align: "right" });
+      y += 20;
+      doc.moveTo(left, y).lineTo(left + pageWidth, y).strokeColor("#e5e5e5").stroke();
     }
+    doc.y = y + 10;
 
-    doc.moveDown();
-    doc.moveTo(330, doc.y).lineTo(545, doc.y).stroke();
-    doc.moveDown(0.3);
-
-    // Totaux
-    const ligneTotal = (label, val, gras = false) => {
-      const y = doc.y;
-      if (gras) doc.font("Helvetica-Bold");
-      doc.fontSize(10).text(label, 330, y, { width: 120, align: "right" });
-      doc.text(val, x.prix, y, { width: 95, align: "right" });
-      doc.font("Helvetica");
-      doc.moveDown(0.3);
+    // --- Totaux (derniere ligne surlignee en gris, comme "Montant paye" sur Sufio) ---
+    const ligneTotal = (label, val, surligne = false) => {
+      const yT = doc.y;
+      if (surligne) {
+        doc.rect(left, yT - 3, pageWidth, 20).fill("#f0f0f0");
+      }
+      doc.fillColor("#000").font("Helvetica-Bold").fontSize(9);
+      doc.text(label, left, yT + 3, { width: pageWidth - 105, align: "right" });
+      doc.text(val, left + pageWidth - 100, yT + 3, { width: 100, align: "right" });
+      doc.moveDown(1);
     };
+
+    const totalHT =
+      Number(order.currentSubtotalPriceSet.shopMoney.amount) -
+      Number(order.totalTaxSet.shopMoney.amount);
     ligneTotal("Sous-total", fmt(order.currentSubtotalPriceSet.shopMoney.amount));
+    ligneTotal("Total HT", fmt(totalHT));
     for (const t of order.taxLines) {
-      const taux = t.ratePercentage != null ? ` (${t.ratePercentage}%)` : "";
-      ligneTotal(`${t.title}${taux}`, fmt(t.priceSet.shopMoney.amount));
+      const taux = t.ratePercentage != null ? ` ${t.ratePercentage}%` : "";
+      ligneTotal(`TVA (${t.title})${taux}`, fmt(t.priceSet.shopMoney.amount));
     }
-    ligneTotal("Total", fmt(order.totalPriceSet.shopMoney.amount), true);
+    ligneTotal("Total TTC", fmt(order.totalPriceSet.shopMoney.amount));
+    ligneTotal("Montant paye", fmt(order.totalPriceSet.shopMoney.amount), true);
 
     // Pied de page
     doc.moveDown(2);
     doc
-      .fontSize(9)
+      .fontSize(8)
       .fillColor("gray")
+      .font("Helvetica")
       .text(
         `Si vous avez des questions, veuillez envoyer un e-mail a ${SHOP_INFO.contact}`,
-        { align: "left" }
+        left
       );
 
     doc.end();
