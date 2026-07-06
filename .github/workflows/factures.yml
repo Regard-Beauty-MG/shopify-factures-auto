@@ -10,6 +10,11 @@ on:
     - cron: '0 19 * * *'
     - cron: '0 20 * * *'
   workflow_dispatch: # bouton "Run workflow" pour tester a la main
+    inputs:
+      dry_run:
+        description: "Test a blanc (aucun email envoye, aucun tag pose)"
+        type: boolean
+        default: true
 
 jobs:
   envoi:
@@ -27,3 +32,4 @@ jobs:
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           SENDER_NAME: ${{ secrets.SENDER_NAME }}
+          DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '' }}
