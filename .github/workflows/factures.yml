@@ -1,0 +1,29 @@
+name: Envoi factures du jour
+
+on:
+  schedule:
+    # GitHub utilise l'heure UTC.
+    # 21h Paris en ETE (CEST = UTC+2) -> 19:00 UTC
+    # 21h Paris en HIVER (CET = UTC+1) -> 20:00 UTC
+    # On lance aux deux heures ; le script ne traite "aujourd'hui" qu'une fois
+    # et le tag "facture-envoyee" empeche tout doublon.
+    - cron: '0 19 * * *'
+    - cron: '0 20 * * *'
+  workflow_dispatch: # bouton "Run workflow" pour tester a la main
+
+jobs:
+  envoi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: node envoi-factures.js
+        env:
+          SHOP: ${{ secrets.SHOP }}
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          SENDER_NAME: ${{ secrets.SENDER_NAME }}

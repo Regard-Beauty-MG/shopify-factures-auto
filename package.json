@@ -1,0 +1,16 @@
+{
+  "name": "shopify-factures-auto",
+  "version": "1.0.0",
+  "description": "Envoi automatique des factures Paul Beuscher chaque soir a 20h (commandes du jour avec email client)",
+  "type": "module",
+  "main": "envoi-factures.js",
+  "scripts": {
+    "start": "node envoi-factures.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pdfkit": "^0.15.0"
+  }
+}
