@@ -36,6 +36,7 @@ const SHOP_INFO = {
 };
 
 const DRY_RUN = process.env.DRY_RUN === "1"; // test sans envoyer ni taguer
+const TEST_REDIRECT_EMAIL = process.env.TEST_REDIRECT_EMAIL || null; // envoie tout a cette adresse au lieu du client (test)
 
 // --- Petit garde-fou ---------------------------------------------------------
 for (const [k, v] of Object.entries({
@@ -327,11 +328,13 @@ function genererFacturePDF(order) {
 //  Envoie l'email avec la facture PDF en piece jointe (Brevo)
 // ----------------------------------------------------------------------------
 async function envoyerEmail(order, pdfBuffer) {
+  const destinataire = TEST_REDIRECT_EMAIL || order.email;
   const body = {
     sender: { name: SENDER_NAME, email: SENDER_EMAIL },
-    to: [{ email: order.email }],
+    to: [{ email: destinataire }],
     subject: `Votre facture Paul Beuscher - commande ${order.name}`,
     htmlContent: `
+      ${TEST_REDIRECT_EMAIL ? `<p style="color:red">[TEST] Redirige depuis ${order.email}</p>` : ""}
       <p>Bonjour,</p>
       <p>Merci pour votre achat chez <strong>Paul Beuscher</strong>.</p>
       <p>Vous trouverez votre facture (commande ${order.name}) en piece jointe de cet email.</p>
@@ -428,8 +431,11 @@ async function main() {
         console.log(`- ${order.name} : [TEST] facture prete pour ${order.email}`);
       } else {
         await envoyerEmail(order, pdf);
-        await taguerCommande(order.id);
-        console.log(`- ${order.name} : facture envoyee a ${order.email}`);
+        if (!TEST_REDIRECT_EMAIL) await taguerCommande(order.id);
+        console.log(
+          `- ${order.name} : facture envoyee a ${TEST_REDIRECT_EMAIL || order.email}` +
+            (TEST_REDIRECT_EMAIL ? " (redirection test, pas de tag pose)" : "")
+        );
       }
       envoyees++;
     } catch (e) {
