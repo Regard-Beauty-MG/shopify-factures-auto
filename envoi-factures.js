@@ -32,7 +32,7 @@ const SHOP_INFO = {
   pays: "France",
   siret: "FR96101496172",
   ape: "Code APE : 4763Z",
-  contact: "dev@regardbeauty.com",
+  contact: "admin@paul-beuscher.com",
 };
 
 const DRY_RUN = process.env.DRY_RUN === "1"; // test sans envoyer ni taguer
