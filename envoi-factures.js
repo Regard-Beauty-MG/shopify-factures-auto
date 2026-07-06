@@ -16,8 +16,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOGO_PATH = path.join(__dirname, "logo-paul-beuscher.png");
 
 // --- Configuration (vient des "Secrets" GitHub) ------------------------------
-const SHOP = process.env.SHOP;                       // ex: paul-beuscher-2.myshopify.com
-const SHOPIFY_TOKEN = process.env.SHOPIFY_TOKEN;     // token de la custom app Shopify
+const SHOP = process.env.SHOP;                                 // ex: paul-beuscher-2.myshopify.com
+const SHOPIFY_CLIENT_ID = process.env.SHOPIFY_CLIENT_ID;       // Client ID de l'app (Dev Dashboard)
+const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET; // Client Secret de l'app
 const BREVO_API_KEY = process.env.BREVO_API_KEY;     // cle API Brevo
 const SENDER_EMAIL = process.env.SENDER_EMAIL || "dev@regardbeauty.com";
 const SENDER_NAME = process.env.SENDER_NAME || "Paul Beuscher";
@@ -37,11 +38,40 @@ const SHOP_INFO = {
 const DRY_RUN = process.env.DRY_RUN === "1"; // test sans envoyer ni taguer
 
 // --- Petit garde-fou ---------------------------------------------------------
-for (const [k, v] of Object.entries({ SHOP, SHOPIFY_TOKEN, BREVO_API_KEY })) {
+for (const [k, v] of Object.entries({
+  SHOP,
+  SHOPIFY_CLIENT_ID,
+  SHOPIFY_CLIENT_SECRET,
+  BREVO_API_KEY,
+})) {
   if (!v) {
     console.error(`Variable manquante: ${k}. Verifie les Secrets GitHub.`);
     process.exit(1);
   }
+}
+
+// ----------------------------------------------------------------------------
+//  Echange Client ID + Client Secret contre un token Admin API temporaire
+//  (les apps Dev Dashboard n'ont plus de token statique ; il expire en 24h)
+// ----------------------------------------------------------------------------
+let shopifyToken = null;
+
+async function obtenirTokenAdmin() {
+  const res = await fetch(`https://${SHOP}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_id: SHOPIFY_CLIENT_ID,
+      client_secret: SHOPIFY_CLIENT_SECRET,
+      grant_type: "client_credentials",
+    }),
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Echange de token Shopify echoue (${res.status}): ${txt}`);
+  }
+  const json = await res.json();
+  return json.access_token;
 }
 
 // ----------------------------------------------------------------------------
@@ -79,13 +109,14 @@ function plageDuJourParis() {
 //  Appel GraphQL Shopify
 // ----------------------------------------------------------------------------
 async function shopifyGraphQL(query, variables = {}) {
+  if (!shopifyToken) shopifyToken = await obtenirTokenAdmin();
   const res = await fetch(
     `https://${SHOP}/admin/api/${API_VERSION}/graphql.json`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Shopify-Access-Token": SHOPIFY_TOKEN,
+        "X-Shopify-Access-Token": shopifyToken,
       },
       body: JSON.stringify({ query, variables }),
     }

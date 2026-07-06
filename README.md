@@ -27,14 +27,15 @@ git remote add origin https://github.com/Regard-Beauty-MG/shopify-factures-auto.
 git push -u origin main
 ```
 
-### 2. Créer le token Shopify (custom app)
-Dans **Shopify Admin → Settings → Apps and sales channels → Develop apps → Create an app** :
-- Donne un nom (ex. `Factures auto`).
-- **Configure Admin API scopes** → coche :
-  - `read_orders`
-  - `write_orders` (nécessaire pour poser le tag)
-- **Install app** → copie le **Admin API access token** (commence par `shpat_...`).
-- Note aussi ton domaine `.myshopify.com` (ex. `paul-beuscher-2.myshopify.com`).
+### 2. Créer l'app Shopify (Dev Dashboard)
+Dans **Shopify Admin → Settings → Apps and sales channels → Develop apps → Build apps in Dev Dashboard** :
+- Crée une app (ex. `Factures auto`).
+- **Versions → Create version** → Scopes → ajoute `read_orders` et `write_orders` → **Release**.
+- Depuis la page **Overview** de l'app, clique **Install app** et choisis la boutique (ex. `Paul Beuscher`).
+- Dans **Settings → Credentials**, note le **Client ID** et le **Client Secret**.
+- Note aussi le domaine `.myshopify.com` de la boutique (ex. `paul-beuscher-2.myshopify.com`).
+
+⚠️ Ce n'est **pas** le "App automation token" (`atkn_...`, sert au déploiement CLI) — le script utilise le Client ID + Client Secret pour obtenir un token Admin API temporaire (24h) à chaque exécution.
 
 ### 3. Créer le compte Brevo (envoi email gratuit)
 - Crée un compte sur **brevo.com** (300 emails/jour gratuits).
@@ -47,9 +48,10 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 | Nom | Valeur |
 |-----|--------|
 | `SHOP` | `paul-beuscher-2.myshopify.com` |
-| `SHOPIFY_TOKEN` | le token `shpat_...` |
+| `SHOPIFY_CLIENT_ID` | le Client ID de l'app |
+| `SHOPIFY_CLIENT_SECRET` | le Client Secret de l'app |
 | `BREVO_API_KEY` | la clé `xkeysib-...` |
-| `SENDER_EMAIL` | `dev@regardbeauty.com` (vérifiée dans Brevo) |
+| `SENDER_EMAIL` | `dev2@regardbeauty.com` (vérifiée dans Brevo) |
 | `SENDER_NAME` | `Paul Beuscher` |
 
 ### 5. Tester
