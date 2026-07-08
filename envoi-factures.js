@@ -37,8 +37,6 @@ const SHOP_INFO = {
 
 const DRY_RUN = process.env.DRY_RUN === "1"; // test sans envoyer ni taguer
 const TEST_REDIRECT_EMAIL = process.env.TEST_REDIRECT_EMAIL || null; // envoie tout a cette adresse au lieu du client (test)
-const START_DATE = process.env.START_DATE || "";
-const END_DATE = process.env.END_DATE || "";
 
 // Le POS ne remplit pas toujours order.email meme quand un client est associe :
 // on retombe alors sur l'email du profil client (order.customer.email).
@@ -86,26 +84,10 @@ async function obtenirTokenAdmin() {
 // ----------------------------------------------------------------------------
 //  Plage horaire : "aujourd'hui" en heure de Paris (gere l'heure d'ete/hiver)
 // ----------------------------------------------------------------------------
-function plageRecherche() {
-
-  if (START_DATE && END_DATE) {
-
-    console.log("===== MODE MANUEL =====");
-
-    return {
-
-      debut: `${START_DATE}T00:00:00+02:00`,
-
-      fin: `${END_DATE}T23:59:59+02:00`,
-
-      ymd: `${START_DATE} -> ${END_DATE}`
-
-    };
-
-  }
-
+function plageDuJourParis() {
   const now = new Date();
 
+  // Date du jour cote Paris (YYYY-MM-DD)
   const ymd = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Europe/Paris",
     year: "numeric",
@@ -113,30 +95,21 @@ function plageRecherche() {
     day: "2-digit",
   }).format(now);
 
+  // Decalage UTC actuel de Paris : "GMT+2" (ete) ou "GMT+1" (hiver)
   const tz = new Intl.DateTimeFormat("en-US", {
     timeZone: "Europe/Paris",
     timeZoneName: "shortOffset",
   })
     .formatToParts(now)
-    .find((p) => p.type === "timeZoneName").value;
+    .find((p) => p.type === "timeZoneName").value; // ex "GMT+2"
+  const h = (tz.match(/GMT([+-]\d+)/) || [, "+0"])[1]; // "+2"
+  const offset = `${h.startsWith("-") ? "-" : "+"}${String(
+    Math.abs(parseInt(h, 10))
+  ).padStart(2, "0")}:00`;
 
-  const h = (tz.match(/GMT([+-]\d+)/) || [, "+0"])[1];
-
-  const offset =
-    `${h.startsWith("-") ? "-" : "+"}${String(
-      Math.abs(parseInt(h))
-    ).padStart(2, "0")}:00`;
-
-  return {
-
-    debut: `${ymd}T00:00:00${offset}`,
-
-    fin: now.toISOString(),
-
-    ymd
-
-  };
-
+  const debut = `${ymd}T00:00:00${offset}`;   // minuit Paris
+  const fin = now.toISOString();               // maintenant (heure du lancement ~20h)
+  return { debut, fin, ymd };
 }
 
 // ----------------------------------------------------------------------------
@@ -166,7 +139,7 @@ async function shopifyGraphQL(query, variables = {}) {
 //  Recupere toutes les commandes du jour qui n'ont pas encore ete facturees
 // ----------------------------------------------------------------------------
 async function commandesDuJour() {
- const { debut, fin } = plageRecherche();
+  const { debut, fin } = plageDuJourParis();
   const q = `created_at:>='${debut}' created_at:<='${fin}' -tag:facture-envoyee source_name:pos`;
 
   const query = `
@@ -422,7 +395,7 @@ async function taguerCommande(orderId) {
 //  Programme principal
 // ----------------------------------------------------------------------------
 async function main() {
- const { ymd } = plageRecherche();
+  const { ymd } = plageDuJourParis();
 
   // Le workflow se declenche a 19h ET 20h UTC (pour couvrir ete + hiver).
   // On ne traite reellement qu'a 21h heure de Paris. Le lancement manuel
