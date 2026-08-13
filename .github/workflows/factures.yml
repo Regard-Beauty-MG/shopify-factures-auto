@@ -42,6 +42,7 @@ jobs:
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           SENDER_NAME: ${{ secrets.SENDER_NAME }}
+          ALERTE_EMAIL: ${{ secrets.ALERTE_EMAIL }}
           DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '' }}
           TEST_REDIRECT_EMAIL: ${{ github.event_name == 'workflow_dispatch' && inputs.test_redirect_email || '' }}
           DATE_CIBLE: ${{ github.event_name == 'workflow_dispatch' && inputs.date_cible || '' }}

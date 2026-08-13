@@ -37,6 +37,8 @@ const SHOP_INFO = {
 
 const DRY_RUN = process.env.DRY_RUN === "1"; // test sans envoyer ni taguer
 const TEST_REDIRECT_EMAIL = process.env.TEST_REDIRECT_EMAIL || null; // envoie tout a cette adresse au lieu du client (test)
+// Adresse prevenue quand une facture n'a pas pu partir (vide = pas d'alerte).
+const ALERTE_EMAIL = (process.env.ALERTE_EMAIL || "").trim() || null;
 // Garde-fou : s'arrete apres N factures (0 = pas de limite). Utile pour tester.
 const LIMITE = parseInt(process.env.LIMITE || "0", 10) || 0;
 // Rattrapage : traite une journee passee (format AAAA-MM-JJ) au lieu d'aujourd'hui.
@@ -395,6 +397,40 @@ async function envoyerEmail(order, pdfBuffer) {
 }
 
 // ----------------------------------------------------------------------------
+//  Previent par email qu'une facture n'est pas partie.
+//  Volontairement sans piece jointe : doit marcher meme quand tout va mal.
+//  N'echoue jamais : une alerte qui plante ne doit pas masquer le probleme
+//  d'origine (GitHub enverra de toute facon sa notification d'echec de job).
+// ----------------------------------------------------------------------------
+async function alerter(sujet, lignes) {
+  if (!ALERTE_EMAIL) return;
+  try {
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        sender: { name: SENDER_NAME, email: SENDER_EMAIL },
+        to: [{ email: ALERTE_EMAIL }],
+        subject: `[Factures Paul Beuscher] ${sujet}`,
+        htmlContent:
+          `<p>${sujet}</p><ul>` +
+          lignes.map((l) => `<li>${l}</li>`).join("") +
+          `</ul><p>Les commandes concernees ne sont pas taguees : relancer le` +
+          ` workflow (bouton "Run workflow") les reprendra automatiquement.</p>`,
+      }),
+    });
+    if (!res.ok) console.error(`Alerte non envoyee (Brevo ${res.status}).`);
+    else console.log(`Alerte envoyee a ${ALERTE_EMAIL}.`);
+  } catch (e) {
+    console.error(`Alerte non envoyee : ${e.message}`);
+  }
+}
+
+// ----------------------------------------------------------------------------
 //  Marque la commande comme facturee (tag) pour ne jamais la renvoyer
 // ----------------------------------------------------------------------------
 async function taguerCommande(orderId) {
@@ -449,6 +485,7 @@ async function main() {
   let envoyees = 0;
   let sautees = 0;
   let erreurs = 0;
+  const echecs = []; // detail des factures non parties, pour l'email d'alerte
 
   for (const order of commandes) {
     if (LIMITE && envoyees >= LIMITE) {
@@ -480,6 +517,7 @@ async function main() {
       envoyees++;
     } catch (e) {
       erreurs++;
+      echecs.push(`${order.name} (${emailClient(order)}) : ${e.message}`);
       console.error(`- ${order.name} : ERREUR -> ${e.message}`);
     }
   }
@@ -487,10 +525,20 @@ async function main() {
   console.log(
     `\nResultat : ${envoyees} envoyee(s), ${sautees} sans email, ${erreurs} erreur(s).`
   );
-  if (erreurs > 0) process.exit(1); // fait echouer le job GitHub si souci
+
+  if (erreurs > 0) {
+    await alerter(
+      `${erreurs} facture(s) non envoyee(s) le ${ymd}`,
+      echecs
+    );
+    process.exit(1); // fait echouer le job GitHub si souci
+  }
 }
 
-main().catch((e) => {
+main().catch(async (e) => {
   console.error("Echec global:", e);
+  // Panne totale (Shopify injoignable, token refuse...) : aucune facture n'est
+  // partie ce soir, c'est le cas qui doit absolument remonter.
+  await alerter("Le batch a echoue, aucune facture envoyee", [e.message]);
   process.exit(1);
 });
