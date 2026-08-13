@@ -37,6 +37,14 @@ const SHOP_INFO = {
 
 const DRY_RUN = process.env.DRY_RUN === "1"; // test sans envoyer ni taguer
 const TEST_REDIRECT_EMAIL = process.env.TEST_REDIRECT_EMAIL || null; // envoie tout a cette adresse au lieu du client (test)
+// Garde-fou : s'arrete apres N factures (0 = pas de limite). Utile pour tester.
+const LIMITE = parseInt(process.env.LIMITE || "0", 10) || 0;
+// Rattrapage : traite une journee passee (format AAAA-MM-JJ) au lieu d'aujourd'hui.
+const DATE_CIBLE = (process.env.DATE_CIBLE || "").trim() || null;
+if (DATE_CIBLE && !/^\d{4}-\d{2}-\d{2}$/.test(DATE_CIBLE)) {
+  console.error(`DATE_CIBLE invalide: "${DATE_CIBLE}". Format attendu: AAAA-MM-JJ.`);
+  process.exit(1);
+}
 
 // Le POS ne remplit pas toujours order.email meme quand un client est associe :
 // on retombe alors sur l'email du profil client (order.customer.email).
@@ -84,8 +92,33 @@ async function obtenirTokenAdmin() {
 // ----------------------------------------------------------------------------
 //  Plage horaire : "aujourd'hui" en heure de Paris (gere l'heure d'ete/hiver)
 // ----------------------------------------------------------------------------
+// Decalage UTC de Paris a une date donnee : "+02:00" (ete) ou "+01:00" (hiver)
+function offsetParis(dateRef) {
+  const tz = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Paris",
+    timeZoneName: "shortOffset",
+  })
+    .formatToParts(dateRef)
+    .find((p) => p.type === "timeZoneName").value; // ex "GMT+2"
+  const h = (tz.match(/GMT([+-]\d+)/) || [, "+0"])[1]; // "+2"
+  return `${h.startsWith("-") ? "-" : "+"}${String(
+    Math.abs(parseInt(h, 10))
+  ).padStart(2, "0")}:00`;
+}
+
 function plageDuJourParis() {
   const now = new Date();
+
+  // Rattrapage d'une journee passee : on prend la journee complete (00h -> 23h59).
+  if (DATE_CIBLE) {
+    // Midi UTC : evite toute ambiguite de fuseau au moment de lire le decalage.
+    const offset = offsetParis(new Date(`${DATE_CIBLE}T12:00:00Z`));
+    return {
+      debut: `${DATE_CIBLE}T00:00:00${offset}`,
+      fin: `${DATE_CIBLE}T23:59:59${offset}`,
+      ymd: DATE_CIBLE,
+    };
+  }
 
   // Date du jour cote Paris (YYYY-MM-DD)
   const ymd = new Intl.DateTimeFormat("en-CA", {
@@ -95,20 +128,8 @@ function plageDuJourParis() {
     day: "2-digit",
   }).format(now);
 
-  // Decalage UTC actuel de Paris : "GMT+2" (ete) ou "GMT+1" (hiver)
-  const tz = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Europe/Paris",
-    timeZoneName: "shortOffset",
-  })
-    .formatToParts(now)
-    .find((p) => p.type === "timeZoneName").value; // ex "GMT+2"
-  const h = (tz.match(/GMT([+-]\d+)/) || [, "+0"])[1]; // "+2"
-  const offset = `${h.startsWith("-") ? "-" : "+"}${String(
-    Math.abs(parseInt(h, 10))
-  ).padStart(2, "0")}:00`;
-
-  const debut = `${ymd}T00:00:00${offset}`;   // minuit Paris
-  const fin = now.toISOString();               // maintenant (heure du lancement ~20h)
+  const debut = `${ymd}T00:00:00${offsetParis(now)}`; // minuit Paris
+  const fin = now.toISOString();                       // maintenant (heure du lancement)
   return { debut, fin, ymd };
 }
 
@@ -397,9 +418,11 @@ async function taguerCommande(orderId) {
 async function main() {
   const { ymd } = plageDuJourParis();
 
-  // Le workflow se declenche a 19h ET 20h UTC (pour couvrir ete + hiver).
-  // On ne traite reellement qu'a 21h heure de Paris. Le lancement manuel
-  // (bouton "Run workflow") passe toujours.
+  // Le workflow se declenche a 19h ET 20h UTC (pour couvrir ete + hiver), mais
+  // GitHub lance les taches planifiees avec du retard (souvent 15 a 90 min).
+  // On accepte donc toute la plage 21h-23h Paris au lieu de 21h pile : le tag
+  // "facture-envoyee" (et le filtre -tag: de la requete) empeche les doublons
+  // si les deux crons passent le meme soir.
   const heureParis = parseInt(
     new Intl.DateTimeFormat("en-GB", {
       timeZone: "Europe/Paris",
@@ -409,12 +432,15 @@ async function main() {
     10
   );
   const manuel = process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
-  if (!manuel && heureParis !== 21) {
-    console.log(`Il est ${heureParis}h a Paris (pas 21h) -> on ne fait rien.`);
+  console.log(`Lancement a ${heureParis}h (heure de Paris).`);
+  if (!manuel && !DATE_CIBLE && (heureParis < 21 || heureParis > 23)) {
+    console.log(`Hors de la plage 21h-23h a Paris -> on ne fait rien.`);
     return;
   }
 
-  console.log(`=== Factures du ${ymd} (Paris) ===`);
+  console.log(
+    `=== Factures du ${ymd} (Paris) ===` + (DATE_CIBLE ? " [RATTRAPAGE]" : "")
+  );
   if (DRY_RUN) console.log("MODE TEST (DRY_RUN) : aucun email envoye, aucun tag pose.");
 
   const commandes = await commandesDuJour();
@@ -425,6 +451,10 @@ async function main() {
   let erreurs = 0;
 
   for (const order of commandes) {
+    if (LIMITE && envoyees >= LIMITE) {
+      console.log(`Limite de ${LIMITE} facture(s) atteinte -> on s'arrete la.`);
+      break;
+    }
     if (order.sourceName !== "pos") {
       sautees++;
       console.log(`- ${order.name} : source "${order.sourceName}" (pas POS) -> ignore`);

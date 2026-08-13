@@ -5,8 +5,9 @@ on:
     # GitHub utilise l'heure UTC.
     # 21h Paris en ETE (CEST = UTC+2) -> 19:00 UTC
     # 21h Paris en HIVER (CET = UTC+1) -> 20:00 UTC
-    # On lance aux deux heures ; le script ne traite "aujourd'hui" qu'une fois
-    # et le tag "facture-envoyee" empeche tout doublon.
+    # GitHub lance les crons avec du retard (15 a 90 min) : le script accepte
+    # toute la plage 21h-23h Paris. Le tag "facture-envoyee" empeche les doublons
+    # si les deux crons passent le meme soir.
     - cron: '0 19 * * *'
     - cron: '0 20 * * *'
   workflow_dispatch: # bouton "Run workflow" pour tester a la main
@@ -17,6 +18,10 @@ on:
         default: true
       test_redirect_email:
         description: "Rediriger l'email de test vers cette adresse (laisser vide en temps normal)"
+        type: string
+        default: ""
+      date_cible:
+        description: "Rattrapage : facturer une journee passee (AAAA-MM-JJ). Vide = aujourd'hui."
         type: string
         default: ""
 
@@ -39,3 +44,4 @@ jobs:
           SENDER_NAME: ${{ secrets.SENDER_NAME }}
           DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '' }}
           TEST_REDIRECT_EMAIL: ${{ github.event_name == 'workflow_dispatch' && inputs.test_redirect_email || '' }}
+          DATE_CIBLE: ${{ github.event_name == 'workflow_dispatch' && inputs.date_cible || '' }}
